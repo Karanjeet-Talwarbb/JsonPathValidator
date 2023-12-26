@@ -6,6 +6,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,8 +27,28 @@ public class ContextValidator {
     }
     public JsonAdapter validateContext(){
         JsonObject contextObj=new JsonObject(contextObjectAsString);
-        JsonAdapter root=new JsonAdapter(contextObj.getJsonObject("input"));
-        return dfs(root,"");
+        JsonObject root=contextObj.getJsonObject("input");
+        JsonObject completeValidation=new JsonObject("{}");
+        for(String key:root.fieldNames()){
+            JsonObject task=root.getJsonObject(key);
+            JsonObject taskCheck=validateTask(task);
+            completeValidation.put(key,taskCheck);
+        }
+        return new JsonAdapter(completeValidation);
+    }
+    private JsonObject validateTask(JsonObject task){
+        JsonObject temp=new JsonObject("{}");
+        if(task.containsKey("fields")){
+            JsonAdapter fields=new JsonAdapter(task.getValue("fields"));
+            JsonAdapter validateInput=dfs(fields);
+            temp.put("fields",validateInput.getDelegate());
+        }
+        if(task.containsKey("operations")){
+            JsonAdapter operations=new JsonAdapter(task.getValue("operations"));
+            JsonAdapter validateOperations=dfs(operations,"");
+            temp.put("operations",validateOperations.getDelegate());
+        }
+        return temp;
     }
 
     private JsonAdapter dfs(JsonAdapter node, String localContext){
@@ -36,9 +57,6 @@ public class ContextValidator {
          JsonAdapter nodeCopy=node.getNewJsonAdapter();
          while(itr.hasNext()){
              Object curKey=itr.next();
-//             if(itr.isValidIteration()==false){
-//                 continue;
-//             }
              Object curValue=node.getByKey(curKey);
              boolean isNotVal=curValue instanceof List || curValue instanceof Map;
              Object valueToPut=(isNotVal)?dfs(new JsonAdapter(curValue),newLocalContext).getDelegate():
@@ -47,6 +65,19 @@ public class ContextValidator {
          }
          return nodeCopy;
      }
+    private JsonAdapter dfs(JsonAdapter node){
+        JsonAdapterIterator itr=new JsonAdapterIterator(node);
+        JsonAdapter nodeCopy=node.getNewJsonAdapter();
+        while(itr.hasNext()){
+            Object curKey=itr.next();
+            Object curValue=node.getByKey(curKey);
+            boolean isNotVal=curValue instanceof List || curValue instanceof Map;
+            Object valueToPut=(isNotVal)?dfs(new JsonAdapter(curValue)).getDelegate():
+                    checkValue(curValue);
+            nodeCopy.put(curKey,valueToPut);
+        }
+        return nodeCopy;
+    }
     private String getNewLocalContext(JsonAdapter node,String localContext){
          if(node.getKeys().contains("base_context")==false){
              return localContext;
@@ -63,17 +94,32 @@ public class ContextValidator {
              if(isValidJsonPath(jsonPath)==false){
                  return jsonPath;
              }
-             JsonObject contextObj=new JsonObject(contextObjectAsString);
-             JsonObject outputObj=contextObj.getJsonObject("output");
-             jsonPath=jsonPath.replace("$.local_context",localContext);
-             Object rv= JsonPath.read(outputObj.toString(),jsonPath);
-             return rv;
+             return computeJsonPath(jsonPath,localContext);
          }
          catch (Exception e){
              return e.toString();
          }
 
      }
-
-
+     private Object checkValue(Object val){
+         if(!(val instanceof String))
+             return val;
+         try{
+             String jsonPath=(String)val;
+             if(isValidJsonPath(jsonPath)==false||jsonPath.contains("local_context")){
+                 return jsonPath;
+             }
+             return computeJsonPath(jsonPath,"");
+         }
+         catch (Exception e){
+             return e.toString();
+         }
+     }
+     private Object computeJsonPath(String jsonPath,String localContext){
+         JsonObject contextObj=new JsonObject(contextObjectAsString);
+         JsonObject outputObj=contextObj.getJsonObject("output");
+         jsonPath=jsonPath.replace("$.local_context",localContext);
+         Object rv= JsonPath.read(outputObj.toString(),jsonPath);
+         return rv;
+     }
 }
